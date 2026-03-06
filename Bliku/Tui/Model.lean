@@ -3,26 +3,6 @@ import Bliku.Tui.Syntax.Types
 
 namespace Bliku.Tui
 
-inductive Mode where
-  | normal
-  | insert
-  | command
-  | searchForward
-  | searchBackward
-  | visual
-  | visualBlock
-  deriving Repr, BEq, Inhabited
-
-instance : ToString Mode where
-  toString
-    | .normal => "NORMAL"
-    | .insert => "INSERT"
-    | .command => "COMMAND"
-    | .searchForward => "SEARCH"
-    | .searchBackward => "SEARCH"
-    | .visual => "VISUAL"
-    | .visualBlock => "VISUAL BLOCK"
-
 structure BufferSyntaxState where
   lineSpans : Array (Nat × Array Syntax.Span) := #[]
   paletteOverrides : Syntax.Palette := {}
@@ -68,20 +48,15 @@ structure UiConfig where
   visualSelectionStyle : String := "\x1b[7m"
   cursorCharStyle : String := "\x1b[47m\x1b[30m"
   cursorSpaceStyle : String := "\x1b[47m\x1b[30m"
+  floatingChromeActiveStyle : String := ""
+  floatingChromeInactiveStyle : String := ""
   tabStop : Nat := 4
   syntaxPalette : Syntax.Palette := Syntax.defaultPalette
   deriving Inhabited
 
 structure Model where
-  mode : Mode
-  workgroupName : String
   workspace : WorkspaceView
   buffers : Array BufferState
-  selectionStart : Option Cursor := none
-  message : String
-  commandBuffer : String
-  floatingOverlay : Option FloatingOverlay := none
-  completionPopup : Option CompletionPopup := none
   config : UiConfig := {}
   windowHeight : Nat := 24
   windowWidth : Nat := 80

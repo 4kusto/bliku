@@ -1,6 +1,10 @@
 import Bliku.Tui.Primitives
 import Bliku.Tui.Model
+import Bliku.Tui.RenderInput
 import Bliku.Tui.Terminal
+import Bliku.Widget.Popup
+import Bliku.Widget.List
+import Bliku.Widget.Prompt
 
 namespace Bliku.Tui
 
@@ -22,14 +26,12 @@ def shouldRenderMessageAsFloat (msg : String) : Bool :=
     m.startsWith "Failed" ||
     m.contains "not found"
 
-def renderStatusBar (m : Model) : String :=
-  let plain := m.message.trimAscii.toString
+def renderStatusBar (input : RenderInput) : String :=
+  let plain := input.messageLine.trimAscii.toString
   let floatMsg := shouldRenderMessageAsFloat plain
-  match m.mode with
-  | .command => s!":{m.commandBuffer}"
-  | .searchForward => s!"/{m.commandBuffer}"
-  | .searchBackward => s!"?{m.commandBuffer}"
-  | _ => if floatMsg then "" else plain
+  match input.commandLine with
+  | some cmd => Bliku.Widget.renderPrompt { leader := cmd.leader, text := cmd.text, cursorCol := cmd.cursorCol }
+  | none => if floatMsg then input.statusLine else plain
 
 structure FloatingOverlayLayout where
   top : Nat
@@ -39,94 +41,62 @@ structure FloatingOverlayLayout where
   contentRows : Nat
   deriving Inhabited
 
-def computeFloatingOverlayLayout (rows cols : Nat) (overlay : FloatingOverlay) : Option FloatingOverlayLayout := Id.run do
+def computeFloatingOverlayLayout (rows cols : Nat) (overlay : OverlayView) : Option FloatingOverlayLayout := Id.run do
   let availableRows := if rows > 1 then rows - 1 else rows
   if cols < 8 || availableRows < 4 then
     return none
-  let lines := if overlay.lines.isEmpty then #[""] else overlay.lines
-  let titleText := if overlay.title.isEmpty then "" else s!"[{overlay.title}]"
-  let titleRows := if titleText.isEmpty then 0 else 1
-  let naturalWidthContent := lines.foldl (fun acc ln => max acc ln.length) 0
-  let naturalWidth := max naturalWidthContent titleText.length
+  let box := Bliku.Widget.renderPopupBox { title := overlay.title, lines := overlay.lines, maxWidth := overlay.maxWidth }
   let maxInnerWidth := if cols > 8 then cols - 8 else 1
-  let targetWidth := if overlay.maxWidth > 0 then overlay.maxWidth else naturalWidth
-  let innerWidth := max 1 (min targetWidth maxInnerWidth)
-  let maxContentRows := if availableRows > titleRows + 2 then availableRows - titleRows - 2 else 0
+  let innerWidth := max 1 (min box.innerWidth maxInnerWidth)
+  let maxContentRows := if availableRows > box.titleRows + 2 then availableRows - box.titleRows - 2 else 0
   if maxContentRows == 0 then return none
-  let contentRows := max 1 (min lines.size maxContentRows)
-  let boxHeight := contentRows + titleRows + 2
+  let contentRows := max 1 (min box.contentRows maxContentRows)
+  let boxHeight := contentRows + box.titleRows + 2
   let boxWidth := innerWidth + 4
   let top := (availableRows - boxHeight) / 2
   let left := (cols - boxWidth) / 2
-  return some { top, left, innerWidth, titleRows, contentRows }
+  return some { top, left, innerWidth, titleRows := box.titleRows, contentRows }
 
-def renderFloatingOverlay (rows cols : Nat) (overlay : FloatingOverlay) : Array String := Id.run do
+def renderFloatingOverlay (rows cols : Nat) (overlay : OverlayView) : Array String := Id.run do
   let some layout := computeFloatingOverlayLayout rows cols overlay | return #[]
-  let lines := if overlay.lines.isEmpty then #[""] else overlay.lines
-  let titleText := if overlay.title.isEmpty then "" else s!"[{overlay.title}]"
-  let border := "+" ++ "".pushn '-' (layout.innerWidth + 2) ++ "+"
+  let popup := Bliku.Widget.renderPopupBox { title := overlay.title, lines := overlay.lines, maxWidth := layout.innerWidth }
   let mut out : Array String := #[]
-  out := out.push (moveCursorStr layout.top layout.left)
-  out := out.push border
-  if layout.titleRows == 1 then
-    out := out.push (moveCursorStr (layout.top + 1) layout.left)
-    let clipped := (titleText.take layout.innerWidth).toString
-    let pad := if clipped.length < layout.innerWidth then "".pushn ' ' (layout.innerWidth - clipped.length) else ""
-    out := out.push s!"| {clipped}{pad} |"
-  for i in [0:layout.contentRows] do
-    let raw := lines[i]?.getD ""
-    let clipped := (raw.take layout.innerWidth).toString
-    let pad := if clipped.length < layout.innerWidth then "".pushn ' ' (layout.innerWidth - clipped.length) else ""
-    let row := layout.top + 1 + layout.titleRows + i
-    out := out.push (moveCursorStr row layout.left)
-    out := out.push s!"| {clipped}{pad} |"
-  out := out.push (moveCursorStr (layout.top + layout.contentRows + layout.titleRows + 1) layout.left)
-  out := out.push border
+  for i in [0:popup.lines.size] do
+    out := out.push (moveCursorStr (layout.top + i) layout.left)
+    out := out.push popup.lines[i]!
   out
 
-def messageOverlayForState (m : Model) : Option FloatingOverlay :=
-  let plain := m.message.trimAscii.toString
+def messageOverlayForState (input : RenderInput) : Option OverlayView :=
+  let plain := input.messageLine.trimAscii.toString
   let floatMsg := shouldRenderMessageAsFloat plain
-  if m.floatingOverlay.isNone && m.mode != .command && m.mode != .searchForward && m.mode != .searchBackward && floatMsg then
+  if input.overlay.isNone && input.commandLine.isNone && floatMsg then
     if plain.isEmpty then none
     else some { title := "Message", lines := (plain.splitOn "\n").toArray }
   else
     none
 
-def renderCompletionPopup (_rows cols : Nat) (m : Model) (cursorPos : Option (Nat × Nat)) : Array String := Id.run do
-  let some popup := m.completionPopup | return #[]
+def renderCompletionPopup (_rows cols : Nat) (config : UiConfig) (popup : CompletionView) (cursorPos : Option (Nat × Nat)) : Array String := Id.run do
   let some (cursorRow, cursorCol) := cursorPos | return #[]
-  if popup.items.isEmpty then return #[]
-  let visibleMax := min 8 popup.items.size
-  let labels := popup.items.extract 0 visibleMax |>.map (fun it => it.label)
-  let naturalW := labels.foldl (fun acc s => max acc s.length) 0
-  let innerWidth := max 8 (min 48 naturalW)
-  let boxWidth := innerWidth + 2
+  let items := popup.items.map (fun it => Bliku.Widget.ListItem.mk it.label)
+  let borderCh := if config.hSplitStr.isEmpty then '-' else config.hSplitStr.toList[0]!
+  let box := Bliku.Widget.renderListBox {
+    items := items
+    selected := popup.selected
+    maxVisible := 8
+    borderLeft := config.vSplitStr
+    borderRight := config.vSplitStr
+    borderFill := borderCh
+    selectedStyle := "\x1b[7m"
+    resetStyle := config.resetStyle
+  }
+  if box.lines.isEmpty then
+    return #[]
   let top := cursorRow + 1
-  let left := if cursorCol + boxWidth < cols then cursorCol else (cols - boxWidth)
-  let borderCh := if m.config.hSplitStr.isEmpty then '-' else m.config.hSplitStr.toList[0]!
-  let hline := "".pushn borderCh innerWidth
-  let border := m.config.vSplitStr ++ hline ++ m.config.vSplitStr
+  let left := if cursorCol + box.width < cols then cursorCol else (cols - box.width)
   let mut out : Array String := #[]
-  out := out.push (moveCursorStr top left)
-  out := out.push border
-  let selected := if popup.selected < visibleMax then popup.selected else 0
-  for i in [0:visibleMax] do
-    let label := (labels[i]!.take innerWidth).toString
-    let pad := if label.length < innerWidth then "".pushn ' ' (innerWidth - label.length) else ""
-    out := out.push (moveCursorStr (top + 1 + i) left)
-    out := out.push m.config.vSplitStr
-    if i == selected then
-      out := out.push "\x1b[7m"
-      out := out.push label
-      out := out.push pad
-      out := out.push m.config.resetStyle
-    else
-      out := out.push label
-      out := out.push pad
-    out := out.push m.config.vSplitStr
-  out := out.push (moveCursorStr (top + visibleMax + 1) left)
-  out := out.push border
+  for i in [0:box.lines.size] do
+    out := out.push (moveCursorStr (top + i) left)
+    out := out.push box.lines[i]!
   out
 
 end Bliku.Tui
