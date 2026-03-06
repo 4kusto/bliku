@@ -3,16 +3,54 @@ import Bliku.Tui.Model
 import Bliku.Tui.Window
 import Bliku.Tui.Overlay
 import Bliku.Tui.Terminal
+import Bliku.Tui.Syntax
 
 namespace Bliku.Tui
 
 open Bliku.Tui.Terminal
 
-private def renderLineSlice (line : String) (scrollCol width : Nat) : String :=
-  ((line.drop scrollCol).take width).toString
+structure VisibleCell where
+  text : String
+  col : Nat
+  startByte : Nat
+  endByte : Nat
+  deriving Repr, Inhabited
+
+private def collectVisibleCells (line : String) (scrollCol width : Nat) : Array VisibleCell := Id.run do
+  let mut out : Array VisibleCell := #[]
+  let mut bytePos := 0
+  let mut col := 0
+  for ch in line.toList do
+    let nextByte := bytePos + ch.utf8Size
+    if scrollCol <= col && col < scrollCol + width then
+      out := out.push {
+        text := ch.toString
+        col := col
+        startByte := bytePos
+        endByte := nextByte
+      }
+    bytePos := nextByte
+    col := col + 1
+  out
+
+private def lineDisplayLength (line : String) : Nat :=
+  line.toList.length
 
 private def getBufferLine (buf : BufferState) (row : Nat) : String :=
   buf.lines[row]?.getD ""
+
+private def getExternalSyntaxLine (buf : BufferState) (lineIdx : Nat) : Array Syntax.Span :=
+  match buf.syntaxState.lineSpans.find? (fun (row, _) => row == lineIdx) with
+  | some (_, spans) => spans
+  | none => #[]
+
+private def syntaxPaletteFor (m : Model) (buf : BufferState) : Syntax.Palette :=
+  Syntax.Palette.merge m.config.syntaxPalette buf.syntaxState.paletteOverrides
+
+private def syntaxSpansForLine (buf : BufferState) (lineIdx : Nat) (line : String) : Array Syntax.Span :=
+  let builtin := Syntax.highlightLine buf.filename line
+  let external := getExternalSyntaxLine buf lineIdx
+  external ++ builtin
 
 private def isVisualMode (mode : Mode) : Bool :=
   mode == .visual || mode == .visualBlock
@@ -42,28 +80,31 @@ private def isInSelection (m : Model) (cur : Cursor) (row col : Nat) : Bool :=
         else if row == p2.row then col <= p2.col
         else false
 
-private def styleVisibleLine
-    (m : Model) (windowId lineIdx scrollCol : Nat) (visible : String) (windowCursor : Option Cursor) : String := Id.run do
+def renderVisibleLine
+    (m : Model) (buf : BufferState) (windowId lineIdx scrollCol availableWidth : Nat)
+    (windowCursor : Option Cursor) : String := Id.run do
   let activeRow := windowCursor.map (fun c => c.row) |>.getD 0
   let activeCol := windowCursor.map (fun c => c.col) |>.getD 0
   let selectionCur := windowCursor.getD { row := lineIdx, col := scrollCol }
+  let line := getBufferLine buf lineIdx
+  let visibleCells := collectVisibleCells line scrollCol availableWidth
+  let syntaxSpans := syntaxSpansForLine buf lineIdx line
+  let syntaxPalette := syntaxPaletteFor m buf
   let mut out : Array String := #[]
   let mut activeStyle : Option String := none
-  let chars := visible.toList
-  let mut i := 0
-  for ch in chars do
-    let col := scrollCol + i
+  for cell in visibleCells do
     let isCursor :=
+      windowCursor.isSome &&
       windowId == m.workspace.activeWindowId &&
       lineIdx == activeRow &&
-      col == activeCol
+      cell.col == activeCol
     let desiredStyle : Option String :=
       if isCursor then
-        if ch == ' ' then some m.config.cursorSpaceStyle else some m.config.cursorCharStyle
-      else if isInSelection m selectionCur lineIdx col then
+        if cell.text == " " then some m.config.cursorSpaceStyle else some m.config.cursorCharStyle
+      else if isInSelection m selectionCur lineIdx cell.col then
         some m.config.visualSelectionStyle
       else
-        none
+        (Syntax.faceForByteRange syntaxPalette syntaxSpans cell.startByte cell.endByte).map Syntax.Face.toAnsi
     if desiredStyle != activeStyle then
       match activeStyle with
       | some _ => out := out.push m.config.resetStyle
@@ -72,20 +113,19 @@ private def styleVisibleLine
       | some stl => out := out.push stl
       | none => pure ()
       activeStyle := desiredStyle
-    out := out.push ch.toString
-    i := i + 1
+    out := out.push cell.text
   if activeStyle.isSome then
     out := out.push m.config.resetStyle
   return String.intercalate "" out.toList
 
 private def appendCursorOnBlankCell
     (m : Model) (windowId lineIdx scrollCol availableWidth : Nat)
-    (visible : String) (lineToDraw : String) (windowCursor : Option Cursor) : String := Id.run do
+    (line : String) (lineToDraw : String) (windowCursor : Option Cursor) : String := Id.run do
   let some cur := windowCursor | return lineToDraw
   if windowId != m.workspace.activeWindowId || lineIdx != cur.row || cur.col < scrollCol then
     return lineToDraw
   let visCol := cur.col - scrollCol
-  let visLen := visible.toList.length
+  let visLen := lineDisplayLength line - scrollCol |> min availableWidth
   if visCol < visLen || visCol >= availableWidth then
     return lineToDraw
   let padCount := visCol - visLen
@@ -109,9 +149,9 @@ private def renderWindow (m : Model) (windowId : Nat) (view : ViewState) (rect :
       let windowCursor := if windowId == m.workspace.activeWindowId then some view.cursor else none
       if m.config.showLineNumbers then
         out := out.push s!"{leftPad (toString (lineIdx + 1)) 3} "
-      let visible := renderLineSlice (getBufferLine buf lineIdx) view.scrollCol availableWidth
-      let styled := styleVisibleLine m windowId lineIdx view.scrollCol visible windowCursor
-      let lineToDraw := appendCursorOnBlankCell m windowId lineIdx view.scrollCol availableWidth visible styled windowCursor
+      let line := getBufferLine buf lineIdx
+      let styled := renderVisibleLine m buf windowId lineIdx view.scrollCol availableWidth windowCursor
+      let lineToDraw := appendCursorOnBlankCell m windowId lineIdx view.scrollCol availableWidth line styled windowCursor
       out := out.push lineToDraw
     else
       out := out.push m.config.emptyLineMarker

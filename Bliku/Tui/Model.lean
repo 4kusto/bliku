@@ -1,4 +1,5 @@
 import Bliku.Tui.Window
+import Bliku.Tui.Syntax.Types
 
 namespace Bliku.Tui
 
@@ -22,11 +23,17 @@ instance : ToString Mode where
     | .visual => "VISUAL"
     | .visualBlock => "VISUAL BLOCK"
 
+structure BufferSyntaxState where
+  lineSpans : Array (Nat × Array Syntax.Span) := #[]
+  paletteOverrides : Syntax.Palette := {}
+  deriving Repr, Inhabited
+
 structure BufferState where
   id : Nat
   filename : Option String
   lines : Array String
   missingEol : Bool := false
+  syntaxState : BufferSyntaxState := {}
   deriving Inhabited
 
 structure FloatingOverlay where
@@ -62,6 +69,7 @@ structure UiConfig where
   cursorCharStyle : String := "\x1b[47m\x1b[30m"
   cursorSpaceStyle : String := "\x1b[47m\x1b[30m"
   tabStop : Nat := 4
+  syntaxPalette : Syntax.Palette := Syntax.defaultPalette
   deriving Inhabited
 
 structure Model where

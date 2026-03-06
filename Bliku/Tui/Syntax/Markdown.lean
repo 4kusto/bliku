@@ -22,9 +22,9 @@ def highlightMarkdownLine (line : String) : Array Span := Id.run do
   let bytes := line.toUTF8
   let n := bytes.size
   if isMarkdownHeading bytes then
-    return #[{ startByte := 0, endByte := n, style := markdownHeadingStyle }]
+    return #[{ startByte := 0, endByte := n, kind := .heading }]
   if isMarkdownFence bytes then
-    return #[{ startByte := 0, endByte := n, style := markdownCodeStyle }]
+    return #[{ startByte := 0, endByte := n, kind := .code }]
 
   let mut spans : Array Span := #[]
   let mut i := 0
@@ -34,7 +34,7 @@ def highlightMarkdownLine (line : String) : Array Span := Id.run do
       while j < n && bytes[j]! != 96 do
         j := j + 1
       if j < n then
-        spans := spans.push { startByte := i, endByte := j + 1, style := markdownCodeStyle }
+        spans := spans.push { startByte := i, endByte := j + 1, kind := .code }
         i := j + 1
       else
         i := i + 1
@@ -47,7 +47,7 @@ def highlightMarkdownLine (line : String) : Array Span := Id.run do
         while k < n && bytes[k]! != 41 do
           k := k + 1
         if k < n then
-          spans := spans.push { startByte := i, endByte := k + 1, style := markdownLinkStyle }
+          spans := spans.push { startByte := i, endByte := k + 1, kind := .link }
           i := k + 1
         else
           i := i + 1
@@ -59,7 +59,7 @@ def highlightMarkdownLine (line : String) : Array Span := Id.run do
       while j < n && bytes[j]! != delim do
         j := j + 1
       if j < n && j > i + 1 then
-        spans := spans.push { startByte := i, endByte := j + 1, style := markdownEmphasisStyle }
+        spans := spans.push { startByte := i, endByte := j + 1, kind := .emphasis }
         i := j + 1
       else
         i := i + 1

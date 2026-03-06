@@ -45,13 +45,13 @@ def highlightLeanLine (line : String) : Array Span := Id.run do
           j := j + 1
         else
           j := j + 1
-      spans := spans.push { startByte := i, endByte := j, style := leanStringStyle }
+      spans := spans.push { startByte := i, endByte := j, kind := .stringLiteral }
       i := j
     else if i + 1 < n && bytes[i]! == 45 && bytes[i + 1]! == 45 then
-      spans := spans.push { startByte := i, endByte := n, style := leanCommentStyle }
+      spans := spans.push { startByte := i, endByte := n, kind := .comment }
       i := n
     else if i + 1 < n && bytes[i]! == 47 && bytes[i + 1]! == 45 then
-      spans := spans.push { startByte := i, endByte := n, style := leanCommentStyle }
+      spans := spans.push { startByte := i, endByte := n, kind := .comment }
       i := n
     else if isAsciiDigit b.toNat then
       let mut j := i + 1
@@ -62,7 +62,7 @@ def highlightLeanLine (line : String) : Array Span := Id.run do
           j := j + 1
         else
           break
-      spans := spans.push { startByte := i, endByte := j, style := leanNumberStyle }
+      spans := spans.push { startByte := i, endByte := j, kind := .numberLiteral }
       i := j
     else if isIdentStart b then
       let mut j := i + 1
@@ -70,7 +70,7 @@ def highlightLeanLine (line : String) : Array Span := Id.run do
         j := j + 1
       let tok := String.fromUTF8! (bytes.extract i j)
       if leanKeywords.contains tok then
-        spans := spans.push { startByte := i, endByte := j, style := leanKeywordStyle }
+        spans := spans.push { startByte := i, endByte := j, kind := .keyword }
       i := j
     else
       i := i + 1
